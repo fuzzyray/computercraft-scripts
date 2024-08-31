@@ -1,0 +1,262 @@
+-- Basic little control program for a passively cooled reactor. This program would not be possible, even in the primitive state it is now, without the inspiration and coding support of lolmer and ScatmanJohn. Will passively detect a reactor and a monitor, either through direct proximity or a wired modem. Please ensure the computer and monitors are the advanced version (it's just gold, not exactly rare in Minecraft), and that the monitor is a 3x2.
+local progVer = "1.06"
+local progName = "IC_SimpleNuke"
+local loopTime = 0.5 -- Time between program loops, in seconds. Increase this value if program somehow causes a lot of lag. Which should not happen on any computers made this century
+local baseControlRodLevel = 20 -- Put this as close to what you guess the optimum control rod level will be for your reactor, plus a little more
+local minStoredEnergyPercent = 20 -- Min energy % to store before activating, probably keep it at default (20)
+local maxStoredEnergyPercent = 60 -- Max energy % to store before shutdown, probably keep it at default (70)
+-- This program doesn't care about heat anymore, only tried to maintain the internal power buffer, following 2 lines only included for legacy
+local minReactorTemp = 20 -- Minimum reactor temperature (^C) to maintain
+local maxReactorTemp = 400 -- Maximum reactor temperature (^C) to maintain
+
+----------
+
+-- Basic side determination for wrapping
+function getDeviceSide(deviceType)
+	deviceType = deviceType:lower()
+   
+	for i, side in pairs(rs.getSides()) do
+		if (peripheral.isPresent(side)) then
+			if (string.lower(peripheral.getType(side)) == deviceType) then
+				return side;
+			end
+		end
+	end
+   
+	return nil;
+end
+
+-- Peripheral wrapping function
+function wrapThis(thing, f)
+	local wrapped = nil
+	while wrapped == nil and f <= 100 do
+		wrapped = peripheral.wrap(thing.."_"..f)
+		f = f + 1
+	end
+ 
+	if wrapped == nil then
+		side = getDeviceSide(thing)
+		if side ~= nil then
+			return peripheral.wrap(side)
+		else
+			return nil
+		end
+	else
+		return wrapped
+	end
+end
+
+
+print("Initializing program...",1,1);
+ 
+-- Initialize the monitor
+-- If it can't find a monitor, will wait 5 seconds then reboot
+-- This is needed for server restarts when the computer starts up before the modem does
+local monitor = wrapThis("monitor", 0)
+if monitor == nil then
+	sleep(5)
+	finished = true
+	os.reboot()
+end
+local monitorx, monitory = monitor.getSize()
+if monitorx ~= 29 or monitory ~= 12 then
+	print("Monitor is the wrong size! Needs to be 3x2.")
+	sleep(5)
+	finished = true
+	os.reboot()
+end
+
+-- Connect to the big reactor peripheral
+-- If it can't find a reactor, will wait 5 seconds then reboot
+-- This is needed for server restarts when the computer starts up before the modem does
+local reactor = wrapThis("BigReactors-Reactor", 0)
+if reactor == nil then
+	sleep(5)
+	finished = true
+	os.reboot()
+end
+
+-- Easyprint, saves program space elsewhere
+local function print(str, x, y)
+	term.setCursorPos(x, y)
+	term.write(str)
+end
+ 
+-- Move stuff to monitor
+if  monitor then
+	sleep(1)
+	term.clear()
+	term.setCursorPos(1,1)
+	term.write("Display redirected to Monitor. Type r to reboot, or")
+	term.setCursorPos(1,2)
+	term.write("q to quit and return control to this terminal.")
+	term.redirect(monitor)
+end
+
+-- Restore functions to computer terminal
+function restoreNativeTerminal()
+	repeat
+		term.restore()
+		local w, h = term.getSize()
+	until w == 51 and h == 19
+end
+
+-- Draw some decorative lines
+function drawLines()
+	term.setBackgroundColor(colors.black)
+	paintutils.drawLine(1, 2, 29, 2, colors.lightBlue)
+	paintutils.drawLine(1, 7, 29, 7, colors.lightBlue)
+	term.setBackgroundColor(colors.black)
+end
+
+-- Just to make sure they're relatively high before the control program starts
+if  reactor then
+	sleep(1)
+	reactor.setAllControlRodLevels(baseControlRodLevel)
+else
+	sleep(5)
+	finished = true
+	os.reboot()
+end
+
+-- Draw stuff on the monitor
+local function drawInfo()
+
+	statusstring = "Reactor status: "
+	tempstring = "Temperature: "
+	tempstring2 = "deg. C"
+	powerstring = "Power Output: "
+	powerstring2 = "RF/t"
+	rodstring = "Control Rods: "
+	rodstring2 = "%"
+		
+	monitor.setTextColor(colors.green)
+	print(progName,5,1)
+	monitor.setTextColor(colors.red)
+	print("v",19,1)
+	monitor.setTextColor(colors.green)
+	print(progVer,20,1)
+	monitor.setTextColor(colors.white)
+		
+	print(statusstring,1,3)
+	if reactor.getActive() then
+		monitor.setTextColor(colors.green)
+		print(" online",23,3)
+	else
+		monitor.setTextColor(colors.red)
+		print("offline",23,3)
+	end
+		
+	monitor.setTextColor(colors.white)
+	reactortemp = math.floor(reactor.getFuelTemperature())
+	print(tempstring,1,4)
+	print(reactortemp,16,4)
+	print(tempstring2,24,4)
+		
+	power = math.floor(reactor.getEnergyProducedLastTick())
+	print(powerstring,1,5)
+	print(power,16,5)
+	print(powerstring2,26,5)
+
+	rods = reactor.getControlRodLevel(1)
+	print(rodstring,1,6)
+	print(rods,16,6)
+	print(rodstring2,29,6)
+end
+
+-- Draw stuff on the bottom part of the monitor, power bar etc
+function drawBottomPart()
+	reactivity = math.floor(reactor.getFuelReactivity())
+        paintutils.drawLine(2, 9, 28, 9, colors.gray)
+        if reactivity > 400 then
+                paintutils.drawLine(2, 9, math.floor(26*reactivity/500)+1, 9, colors.red)
+        elseif reactivity > 320 then
+                paintutils.drawLine(2, 9, math.floor(26*reactivity/500)+1, 9, colors.orange)
+        elseif reactivity > 240 then
+                paintutils.drawLine(2, 9, math.floor(26*reactivity/500)+1, 9, colors.yellow)
+        elseif reactivity > 160 then
+                paintutils.drawLine(2, 9, math.floor(26*reactivity/500)+1, 9, colors.green)
+        elseif reactivity > 0 then
+                paintutils.drawLine(2, 9, math.floor(26*reactivity/500)+1, 9, colors.blue)
+        end
+        term.setBackgroundColor(colors.black)
+        print("Fuel Reactivity:",1,8)
+        print(reactivity,24,8)
+        print("%",29,8)
+        term.setBackgroundColor(colors.black)
+		
+	energystorage = reactor.getEnergyStored()
+	storagepercent = math.floor(energystorage/10000000*100)
+	paintutils.drawLine(2, 12, 28, 12, colors.gray)
+	if storagepercent > 4 then
+		paintutils.drawLine(2, 12, math.floor(26*storagepercent/100)+2, 12, colors.yellow)
+	elseif storagepercent > 0 then
+		paintutils.drawPixel(2,12,colors.yellow)
+	end
+	term.setBackgroundColor(colors.black)
+	print("Internal buffer: ",1,11)
+	print(storagepercent,24,11)
+	print("%",29,11)
+	term.setBackgroundColor(colors.black)
+end
+
+-- Controls the reactor, keeping it between configured temps and power storage
+function control()
+	energystorage = reactor.getEnergyStored()
+	reactortemp = math.floor(reactor.getFuelTemperature())
+	ediff = (maxStoredEnergyPercent - minStoredEnergyPercent)*100000
+	ediffper = ediff / 100
+	if energystorage > maxStoredEnergyPercent*100000 then
+		reactor.setActive(false)
+	reactor.setAllControlRodLevels(95)
+	elseif energystorage < minStoredEnergyPercent*100000 then
+		reactor.setActive(true)
+		reactor.setAllControlRodLevels(5)
+	elseif energystorage > minStoredEnergyPercent*100000 then
+		reactor.setActive(true)
+		blarg = energystorage - minStoredEnergyPercent*100000
+		blarg2 = math.floor(blarg/(ediffper+1))
+		reactor.setAllControlRodLevels(blarg2)
+	end
+end
+
+-- Main program
+function main()
+	while not finished do
+		if reactor.getConnected() then
+			drawLines()
+			drawInfo()
+			drawBottomPart()
+			control()
+			sleep(loopTime)
+		end
+	end
+end
+
+-- Event handler for exiting, editting and debugging
+function eventHandler()
+	while not finished do
+		event, arg1, arg2, arg3 = os.pullEvent()
+		if event == "char" and not inManualMode then
+			local ch = string.lower(arg1)
+			if ch == "q" then
+				finished = true
+			elseif ch == "r" then
+				finished = true
+				os.reboot()
+			end
+		end
+	end
+end
+
+while not finished do
+	parallel.waitForAny(eventHandler, main)
+	sleep(loopTime)
+end
+
+-- Returns control to the terminal if the program has an error or whatever
+term.clear()
+term.setCursorPos(1,1)
+restoreNativeTerminal()
+term.clear()
+term.setCursorPos(1,1)
